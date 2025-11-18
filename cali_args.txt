@@ -1,5 +1,5 @@
---basic_data_path=data_cali/basic
---default_param_dir=data_cali/default_param
+--basic_data_path=data_cali/basic_data/basic
+--default_param_dir=data_cali/basic_data/default_param
 --precip_path=data_cali/mrmsGauge/mrmsGauge_18_19
 --precip_name=GaugeCorr_QPE_01H_00.00_YYYYMMDD-HH0000.grib2.tif
 --pet_path=data_cali/PET_tif
