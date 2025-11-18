@@ -360,11 +360,33 @@ def write_control_file(control_folder: str, control_text: str) -> str:
     return out_path
 
 
+
+def ensure_abs_path(path: str) -> str:
+    """Convert relative paths to absolute paths based on the current working directory."""
+    if path is None:
+        return path
+    # Expand ~
+    path = os.path.expanduser(path)
+    # Return as-is if already absolute, otherwise prepend current working directory and normalize
+    if os.path.isabs(path):
+        return path
+    return os.path.abspath(os.path.join(os.getcwd(), path))
+
+
 def main():
     args = parse_args()
     site = args.site_num
 
     # Resolve fixed filenames from the two root folders
+    args.basic_data_path   = ensure_abs_path(args.basic_data_path)
+    args.default_param_dir = ensure_abs_path(args.default_param_dir)
+    args.cali_set_dir      = ensure_abs_path(args.cali_set_dir)
+    args.precip_path       = ensure_abs_path(args.precip_path)
+    args.pet_path          = ensure_abs_path(args.pet_path)
+    args.gauge_outdir      = ensure_abs_path(args.gauge_outdir)
+    args.results_outdir    = ensure_abs_path(args.results_outdir)
+    args.usgs_script_path  = ensure_abs_path(args.usgs_script_path)
+    
     dem_path = os.path.join(args.basic_data_path, "dem_usa.tif")
     ddm_path = os.path.join(args.basic_data_path, "fdir_usa.tif")
     fam_path = os.path.join(args.basic_data_path, "facc_usa.tif")

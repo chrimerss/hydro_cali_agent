@@ -1,0 +1,14 @@
+# Core numerical/data libraries
+numpy
+pandas
+
+# Plotting utilities for hydrographs and calibration diagnostics
+matplotlib
+
+# HTTP clients and USGS data helpers
+requests
+dataretrieval
+
+# LLM agent tooling
+openai
+python-dotenv
