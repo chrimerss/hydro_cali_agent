@@ -28,6 +28,7 @@ class RoundRecord:
     rationale: str = ""
     risk: str = ""
     focus: str = ""
+    best_candidates_by_metric: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass
@@ -58,6 +59,7 @@ class HistoryStore:
                     "rationale": r.rationale,
                     "risk": r.risk,
                     "focus": r.focus,
+                    "best_candidates_by_metric": r.best_candidates_by_metric,
                 }
                 for r in self.rounds
             ],

@@ -140,6 +140,23 @@ class TwoStageCalibrationManager:
             summary.update(metadata)
         (best_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2))
 
+    def _summarize_outcome(self,
+                           outcome: CandidateOutcome,
+                           *,
+                           criterion: str,
+                           value: float) -> Dict[str, Any]:
+        return {
+            "round_index": outcome.simulation.round_index,
+            "candidate_index": outcome.simulation.candidate_index,
+            "criterion": criterion,
+            "criterion_value": value,
+            "aggregate_metrics": outcome.aggregate_metrics,
+            "full_metrics": outcome.full_metrics,
+            "params": outcome.params.values.copy(),
+            "hydrograph": outcome.hydrograph_path,
+            "event_figures": outcome.event_figures[: self.include_max_event_images],
+        }
+
     def _history_summary(self, last_k: int = 3) -> str:
         if not self.history.rounds:
             return "No prior rounds."
@@ -199,6 +216,34 @@ class TwoStageCalibrationManager:
         if np.isfinite(peak_ratio) and peak_ratio > 0:
             score -= 0.1 * abs(math.log(peak_ratio))
         return score
+
+    def _collect_round_bests(self, outcomes: Sequence[CandidateOutcome]) -> Dict[str, Dict[str, Any]]:
+        metric_extractors = {
+            "score": lambda outcome: self._candidate_score(outcome.aggregate_metrics, outcome.full_metrics),
+            "full_nse": lambda outcome: outcome.full_metrics.get("NSE", float("nan")),
+            "full_cc": lambda outcome: outcome.full_metrics.get("CC", float("nan")),
+            "full_kge": lambda outcome: outcome.full_metrics.get("KGE", float("nan")),
+        }
+        round_bests: Dict[str, Dict[str, Any]] = {}
+        for key, extractor in metric_extractors.items():
+            best_value = float("-inf")
+            best_outcome: Optional[CandidateOutcome] = None
+            for outcome in outcomes:
+                value = extractor(outcome)
+                if not np.isfinite(value):
+                    continue
+                if best_outcome is None or value > best_value:
+                    best_value = value
+                    best_outcome = outcome
+            if best_outcome is None:
+                continue
+            self._ensure_plots(best_outcome)
+            round_bests[key] = self._summarize_outcome(
+                best_outcome,
+                criterion=key,
+                value=best_value,
+            )
+        return round_bests
 
     def _select_best(self, outcomes: List[CandidateOutcome]) -> int:
         best_idx = -1
@@ -287,6 +332,7 @@ class TwoStageCalibrationManager:
                 )
                 for outcome in outcomes
             ]
+            round_metric_bests = self._collect_round_bests(outcomes)
             round_record = RoundRecord(
                 round_index=r,
                 proposals=proposals,
@@ -296,6 +342,7 @@ class TwoStageCalibrationManager:
                 rationale=eval_meta.get("rationale", ""),
                 risk=eval_meta.get("risk", ""),
                 focus=eval_meta.get("focus", ""),
+                best_candidates_by_metric=round_metric_bests,
             )
             self.history.rounds.append(round_record)
             improved = self.history.update_best(
