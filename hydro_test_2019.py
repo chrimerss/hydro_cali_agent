@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, Tuple
 
@@ -83,18 +84,19 @@ def render_control(template: str,
     }.items():
         content = _replace_scalar(content, name, val)
 
+    output_str = str(output_dir)
     if CONTROL_PATTERN.search(content):
-        content = CONTROL_PATTERN.sub(rf"\1{output_dir}/", content)
+        content = CONTROL_PATTERN.sub(rf"\1{output_str}/", content)
     else:
-        content += f"\nOUTPUT={output_dir}/\n"
+        content += f"\nOUTPUT={output_str}/\n"
 
     return content
 
 
 def write_control(content: str, site_dir: Path, results_tag: str, subfolder: str) -> Path:
-    out_dir = site_dir / "controls" / results_tag / subfolder
+    out_dir = (site_dir / "controls" / results_tag / subfolder)
     out_dir.mkdir(parents=True, exist_ok=True)
-    control_path = out_dir / "control.txt"
+    control_path = (out_dir / "control.txt").resolve()
     control_path.write_text(content)
     return control_path
 
@@ -120,22 +122,23 @@ def run_test_for_folder(site_dir: Path,
                         results_tag: str,
                         ef5_executable: str,
                         eval_bounds: Tuple[str, str]) -> Dict[str, object]:
-    output_dir = site_dir / "results" / results_tag / subfolder
+    output_dir = (site_dir / "results" / results_tag / subfolder)
     output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = output_dir.resolve()
 
     control_text = render_control(template, params, output_dir, time_begin, time_end, time_step)
     control_path = write_control(control_text, site_dir, results_tag, subfolder)
 
-    log_path = output_dir / "logs" / "ef5.log"
+    log_path = (output_dir / "logs" / "ef5.log")
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    run_ef5(str(control_path), ef5_executable=ef5_executable, cwd=str(site_dir), log_path=str(log_path))
+    run_ef5(str(control_path), ef5_executable=ef5_executable, cwd=str(site_dir), log_path=str(log_path.resolve()))
 
-    csv_path = locate_csv(output_dir, gauge_num)
+    csv_path = locate_csv(output_dir, gauge_num).resolve()
     metrics_2019 = read_metrics_for_period(csv_path, start=eval_bounds[0], end=eval_bounds[1])
 
     return {
-        "control_path": str(control_path),
+        "control_path": str(control_path.resolve()),
         "output_csv": str(csv_path),
         "params": params,
         "metrics_2019": metrics_2019,
@@ -144,31 +147,39 @@ def run_test_for_folder(site_dir: Path,
 
 def main() -> None:
     args = parse_args()
-    site_dir = Path(args.cali_set_dir) / f"{args.site_num}_{args.cali_tag}"
+    site_dir = (Path(args.cali_set_dir).expanduser().resolve() / f"{args.site_num}_{args.cali_tag}")
     template = load_template(site_dir)
 
-    results_root = site_dir / "results" / args.results_tag
+    results_root = (site_dir / "results" / args.results_tag).resolve()
     results_root.mkdir(parents=True, exist_ok=True)
 
     summary: Dict[str, Dict[str, object]] = {}
-    for metric_key, subfolder in BEST_SUBFOLDERS.items():
-        print(f"[INFO] Running test for best {metric_key} parameters (folder={subfolder})…")
-        params = load_best_params(site_dir, subfolder)
-        summary[subfolder] = run_test_for_folder(
-            site_dir=site_dir,
-            gauge_num=args.site_num,
-            template=template,
-            subfolder=subfolder,
-            params=params,
-            time_begin=args.time_begin,
-            time_end=args.time_end,
-            time_step=args.time_step,
-            results_tag=args.results_tag,
-            ef5_executable=args.ef5_executable,
-            eval_bounds=(args.eval_start, args.eval_end),
-        )
+    futures = {}
+    with ThreadPoolExecutor(max_workers=len(BEST_SUBFOLDERS)) as executor:
+        for metric_key, subfolder in BEST_SUBFOLDERS.items():
+            print(f"[INFO] Running test for best {metric_key} parameters (folder={subfolder})…")
+            params = load_best_params(site_dir, subfolder)
+            future = executor.submit(
+                run_test_for_folder,
+                site_dir,
+                args.site_num,
+                template,
+                subfolder,
+                params,
+                args.time_begin,
+                args.time_end,
+                args.time_step,
+                args.results_tag,
+                args.ef5_executable,
+                (args.eval_start, args.eval_end),
+            )
+            futures[future] = subfolder
 
-    summary_path = results_root / "test_summary.json"
+        for future in as_completed(futures):
+            subfolder = futures[future]
+            summary[subfolder] = future.result()
+
+    summary_path = (results_root / "test_summary.json").resolve()
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2))
     print(f"[INFO] Test results saved to {summary_path}")
 
