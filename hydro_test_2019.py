@@ -43,7 +43,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gauge_outdir", default="./data_cali/gauge_18_19", help="Directory to store downloaded USGS CSV")
     parser.add_argument("--python_exec", default=sys.executable, help="Python executable for the USGS downloader")
     parser.add_argument("--usgs_script_path", default="./usgs_gauge_download.py", help="Path to the USGS download script")
-    parser.add_argument("--skip_download", action="store_true", help="Skip downloading USGS observations")
+    parser.add_argument("--skip_gauge_download", action="store_true", help="Skip downloading USGS observations")
+    parser.add_argument("--skip_download", action="store_true", dest="skip_gauge_download", help="Deprecated alias for --skip_gauge_download")
     parser.add_argument("--ef5_executable", default="./EF5/bin/ef5", help="Path to EF5 executable")
     return parser.parse_args()
 
@@ -136,8 +137,8 @@ def ensure_gauge_data(site_num: str,
                       time_step: str,
                       python_exec: str,
                       usgs_script_path: str,
-                      skip_download: bool) -> None:
-    if skip_download:
+                      skip_gauge_download: bool) -> None:
+    if skip_gauge_download:
         print("[INFO] Skipping gauge download for test run.")
         return
 
@@ -219,7 +220,7 @@ def main() -> None:
         time_step=args.time_step,
         python_exec=args.python_exec,
         usgs_script_path=ensure_abs_path(args.usgs_script_path),
-        skip_download=args.skip_download,
+        skip_gauge_download=args.skip_gauge_download,
     )
 
     ef5_executable = ensure_abs_path(args.ef5_executable)

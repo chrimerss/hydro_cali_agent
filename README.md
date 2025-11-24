@@ -70,7 +70,7 @@ echo "OPENAI_API_KEY=<YOUR_OPENAI_API_KEY>" > .env
 | `--wm`, `--b`, `--im`, `--ke`, `--fc`, `--iwu` | Scalar Crest parameter seeds used as the starting point for candidate generation (override raster-derived defaults). |
 | `--under`, `--leaki`, `--th`, `--isu`, `--alpha`, `--beta`, `--alpha0` | KW routing parameter seeds manipulated by the agent per round. |
 | `--python_exec`, `--usgs_script_path` | Let you specify which Python binary/script should execute `usgs_gauge_download.py`. |
-| `--skip_download` | When present, assumes gauge observations already exist and bypasses the download subprocess. |
+| `--skip_gauge_download` (or legacy `--skip_download`) | When present, assumes gauge observations already exist and bypasses the download subprocess. |
 | `--n_candidates`, `--n_peaks`, `--max_rounds` | Control the calibration loop breadth, number of hydrograph peaks used for scoring, and max rounds of EF5 runs, respectively. |
 
 > 💡 Use `@cali_args.txt` to keep long flag sets tidy; the argparse configuration already enables `fromfile_prefix_chars='@'`.
