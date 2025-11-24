@@ -311,8 +311,10 @@ def parse_args() -> argparse.Namespace:
                    help="Python executable used to call usgs_gauge_download.py")
     p.add_argument("--usgs_script_path", default="./usgs_gauge_download.py",
                    help="Path to usgs_gauge_download.py")
-    p.add_argument("--skip_download", action="store_true",
-                   help="If set, do not call usgs_gauge_download.py")
+    p.add_argument("--skip_gauge_download", action="store_true",
+                   help="If set, skip downloading USGS gauge data and use existing files")
+    p.add_argument("--skip_download", action="store_true", dest="skip_gauge_download",
+                   help="Deprecated alias for --skip_gauge_download")
 
     # Calibration manager knobs
     p.add_argument("--n_candidates", type=int, default=8)
@@ -422,7 +424,7 @@ def main():
     obs_csv_path = build_obs_csv_path(args.gauge_outdir, site)
 
     # 3) Optionally download the hourly CSV
-    if not args.skip_download:
+    if not args.skip_gauge_download:
         run_usgs_downloader(
             python_exec=args.python_exec,
             script_path=args.usgs_script_path,
