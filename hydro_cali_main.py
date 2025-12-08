@@ -425,6 +425,53 @@ def _clip_raster(src_path: Path, dst_path: Path, bounds: BoundingBox) -> None:
             dst.write(data)
 
 
+def _clip_raster_preserve_profile(src_path: Path, dst_path: Path, bounds: BoundingBox) -> None:
+    """Clip raster to bounds while preserving dtype/nodata/metadata."""
+
+    with rasterio.open(src_path) as src:
+        dataset_bounds = BoundingBox(*src.bounds)
+        clip_bounds = BoundingBox(
+            left=max(bounds.left, dataset_bounds.left),
+            bottom=max(bounds.bottom, dataset_bounds.bottom),
+            right=min(bounds.right, dataset_bounds.right),
+            top=min(bounds.top, dataset_bounds.top),
+        )
+        if clip_bounds.left >= clip_bounds.right or clip_bounds.bottom >= clip_bounds.top:
+            raise ValueError(f"Clip bounds outside raster extent for {src_path}")
+
+        window = from_bounds(
+            left=clip_bounds.left,
+            bottom=clip_bounds.bottom,
+            right=clip_bounds.right,
+            top=clip_bounds.top,
+            transform=src.transform,
+        )
+        window = window.round_offsets().round_lengths()
+        window = window.intersection(Window(0, 0, src.width, src.height))
+
+        data = src.read(window=window)
+        transform = rasterio.windows.transform(window, src.transform)
+        profile = src.profile.copy()
+
+        compress = profile.get("compress")
+        if compress is None and profile.get("compression"):
+            compress = profile.get("compression")
+
+        profile.update({
+            "height": data.shape[1],
+            "width": data.shape[2],
+            "transform": transform,
+            "count": data.shape[0],
+            "nodata": src.nodatavals[0] if src.nodatavals else profile.get("nodata"),
+        })
+        if compress:
+            profile["compress"] = compress
+
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+        with rasterio.open(dst_path, "w", **profile) as dst:
+            dst.write(data)
+
+
 def clip_mrms_dataset(src_dir: str, dst_dir: str, bounds: BoundingBox) -> str:
     """Clip all MRMS GeoTIFF files in ``src_dir`` into ``dst_dir``.
 
@@ -454,6 +501,44 @@ def clip_mrms_dataset(src_dir: str, dst_dir: str, bounds: BoundingBox) -> str:
         _clip_raster(tif, dst_file, bounds)
 
     return str(dst_path)
+
+
+def clip_basic_datasets(src_dir: str, dst_dir: str, bounds: BoundingBox) -> dict:
+    """Clip DEM/DDM/FACC rasters to ``bounds`` and return new paths."""
+
+    expected = {
+        "dem_usa.tif": "dem",
+        "fdir_usa.tif": "ddm",
+        "facc_usa.tif": "fam",
+    }
+
+    src_path = Path(src_dir)
+    dst_path = Path(dst_dir)
+    ensure_dir(str(dst_path))
+
+    if not src_path.exists():
+        raise FileNotFoundError(f"Basic data directory not found: {src_path}")
+
+    clipped_paths = {}
+    missing_sources = [fname for fname in expected if not (src_path / fname).exists()]
+    if missing_sources:
+        print(f"[WARN] Missing basic data files: {', '.join(missing_sources)}")
+
+    existing_targets = [fname for fname in expected if (dst_path / fname).exists()]
+    if len(existing_targets) == len(expected):
+        print(f"[INFO] Using existing clipped basic data at {dst_path}")
+        return {key: str(dst_path / fname) for fname, key in expected.items()}
+
+    print(f"[INFO] Clipping basic datasets to {dst_path} ...")
+    for fname in tqdm(expected, desc="Clipping basic data", unit="file"):
+        src_file = src_path / fname
+        dst_file = dst_path / fname
+        if not src_file.exists():
+            continue
+        _clip_raster_preserve_profile(src_file, dst_file, bounds)
+        clipped_paths[fname] = str(dst_file)
+
+    return {key: clipped_paths.get(fname, str(src_path / fname)) for fname, key in expected.items()}
 
 
 def build_obs_csv_path(gauge_outdir: str, site_no: str) -> str:
@@ -561,6 +646,11 @@ def main():
     else:
         clip_dir = os.path.join(control_folder, "data_mrms_clip")
         args.precip_path = clip_mrms_dataset(args.precip_path, clip_dir, clip_bounds)
+        basic_clip_dir = os.path.join(control_folder, "data_basic_clip")
+        clipped_basic = clip_basic_datasets(args.basic_data_path, basic_clip_dir, clip_bounds)
+        dem_path = clipped_basic.get("dem", dem_path)
+        ddm_path = clipped_basic.get("ddm", ddm_path)
+        fam_path = clipped_basic.get("fam", fam_path)
 
     # 4) Optionally download the hourly CSV
     if not args.skip_gauge_download:
