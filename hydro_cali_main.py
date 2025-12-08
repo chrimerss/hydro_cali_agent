@@ -392,10 +392,24 @@ def _clip_raster(src_path: Path, dst_path: Path, bounds: BoundingBox) -> None:
         data = src.read(window=window)
         transform = rasterio.windows.transform(window, src.transform)
         profile = src.profile.copy()
+        nodata_val = -9999.0
+
+        # Normalize profile/data so CREST ingests clipped rasters identically to originals
+        data = data.astype("float32", copy=False)
+        src_nodata = src.nodatavals[0] if src.nodatavals else None
+        if src_nodata is not None:
+            data = np.where(data == src_nodata, nodata_val, data)
+        data = np.where(np.isnan(data), nodata_val, data)
+        data = np.where((data > 1000) | (data < 0), nodata_val, data)
+
         profile.update({
             "height": data.shape[1],
             "width": data.shape[2],
             "transform": transform,
+            "dtype": "float32",
+            "nodata": nodata_val,
+            "compress": "none",
+            "count": data.shape[0],
         })
 
         dst_path.parent.mkdir(parents=True, exist_ok=True)
