@@ -403,15 +403,22 @@ def _clip_raster(src_path: Path, dst_path: Path, bounds: BoundingBox) -> None:
         data = np.where(np.isnan(data), nodata_val, data)
         data = np.where((data > 1000) | (data < 0), nodata_val, data)
 
+        # Preserve original profile characteristics (compression, tiling, etc.)
+        # while updating dimensions and data type to match the clipped data.
+        compress = profile.get("compress")
+        if compress is None and profile.get("compression"):
+            compress = profile.get("compression")
+
         profile.update({
             "height": data.shape[1],
             "width": data.shape[2],
             "transform": transform,
             "dtype": "float32",
             "nodata": nodata_val,
-            "compress": "none",
             "count": data.shape[0],
         })
+        if compress:
+            profile["compress"] = compress
 
         dst_path.parent.mkdir(parents=True, exist_ok=True)
         with rasterio.open(dst_path, "w", **profile) as dst:
