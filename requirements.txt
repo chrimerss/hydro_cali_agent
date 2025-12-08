@@ -8,6 +8,8 @@ matplotlib
 # HTTP clients and USGS data helpers
 requests
 dataretrieval
+rasterio
+tqdm
 
 # LLM agent tooling
 openai

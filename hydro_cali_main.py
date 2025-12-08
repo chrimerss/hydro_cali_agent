@@ -15,14 +15,21 @@ Key changes:
 """
 
 import argparse
+import math
 import os
 import re
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import Optional, Any, Union
+from datetime import datetime
+from pathlib import Path
+from typing import Optional, Any, Union, Iterable
 
 import requests
+import rasterio
+from rasterio.coords import BoundingBox
+from rasterio.windows import from_bounds, Window
+from tqdm import tqdm
 
 # ----------------------------- constants ---------------------------------
 MI2_TO_KM2 = 2.58999
@@ -271,6 +278,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--cali_set_dir", default="./cali_set",
                    help="Base folder to hold <site>_<tag>/control.txt")
     p.add_argument("--cali_tag", default="2018", help="Suffix tag for the calibration folder name")
+    p.add_argument("--folder_label", default=None,
+                   help="Extra label appended to the calibration folder; defaults to creation timestamp (YYYYMMDDHHmm)")
 
     # Forcings
     p.add_argument("--precip_path", required=True, help="Folder of precipitation rasters")
@@ -328,6 +337,103 @@ def ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
 
 
+def _current_timestamp_label() -> str:
+    """Return the default folder label (current time in YYYYMMDDHHmm)."""
+    return datetime.now().strftime("%Y%m%d%H%M")
+
+
+def _compute_precip_bounds(lat: float, lon: float, drainage_area_km2: Optional[float]) -> Optional[BoundingBox]:
+    """Estimate a lat/lon bounding box for clipping MRMS based on drainage area.
+
+    The MRMS grid is ~0.01°; we use x = sqrt(A)/100 and clip ±2x around the site.
+    Returns None if the drainage area is unavailable.
+    """
+
+    if drainage_area_km2 is None or drainage_area_km2 <= 0:
+        return None
+    x_deg = math.sqrt(drainage_area_km2) / 100.0
+    half_span = 2 * x_deg
+    return BoundingBox(
+        left=lon - half_span,
+        bottom=lat - half_span,
+        right=lon + half_span,
+        top=lat + half_span,
+    )
+
+
+def _iter_precip_files(src_dir: Path) -> Iterable[Path]:
+    for path in sorted(src_dir.iterdir()):
+        if path.is_file() and path.suffix.lower() in {".tif", ".tiff"}:
+            yield path
+
+
+def _clip_raster(src_path: Path, dst_path: Path, bounds: BoundingBox) -> None:
+    with rasterio.open(src_path) as src:
+        dataset_bounds = BoundingBox(*src.bounds)
+        clip_bounds = BoundingBox(
+            left=max(bounds.left, dataset_bounds.left),
+            bottom=max(bounds.bottom, dataset_bounds.bottom),
+            right=min(bounds.right, dataset_bounds.right),
+            top=min(bounds.top, dataset_bounds.top),
+        )
+        if clip_bounds.left >= clip_bounds.right or clip_bounds.bottom >= clip_bounds.top:
+            raise ValueError(f"Clip bounds outside raster extent for {src_path}")
+
+        window = from_bounds(
+            left=clip_bounds.left,
+            bottom=clip_bounds.bottom,
+            right=clip_bounds.right,
+            top=clip_bounds.top,
+            transform=src.transform,
+        )
+        window = window.round_offsets().round_lengths()
+        window = window.intersection(Window(0, 0, src.width, src.height))
+
+        data = src.read(window=window)
+        transform = rasterio.windows.transform(window, src.transform)
+        profile = src.profile.copy()
+        profile.update({
+            "height": data.shape[1],
+            "width": data.shape[2],
+            "transform": transform,
+        })
+
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+        with rasterio.open(dst_path, "w", **profile) as dst:
+            dst.write(data)
+
+
+def clip_mrms_dataset(src_dir: str, dst_dir: str, bounds: BoundingBox) -> str:
+    """Clip all MRMS GeoTIFF files in ``src_dir`` into ``dst_dir``.
+
+    Keeps filenames intact so downstream CREST ingestion remains unchanged.
+    Displays a progress bar while clipping.
+    """
+
+    src_path = Path(src_dir)
+    dst_path = Path(dst_dir)
+    ensure_dir(str(dst_path))
+
+    if not src_path.exists():
+        raise FileNotFoundError(f"MRMS source directory not found: {src_path}")
+
+    if any(dst_path.iterdir()):
+        print(f"[INFO] Using existing clipped MRMS data at {dst_path}")
+        return str(dst_path)
+
+    tif_files = list(_iter_precip_files(src_path))
+    if not tif_files:
+        print(f"[WARN] No MRMS raster files found under {src_path}; skipping clipping.")
+        return str(dst_path)
+
+    print(f"[INFO] Clipping {len(tif_files)} MRMS files to {dst_path} ...")
+    for tif in tqdm(tif_files, desc="Clipping MRMS", unit="file"):
+        dst_file = dst_path / tif.name
+        _clip_raster(tif, dst_file, bounds)
+
+    return str(dst_path)
+
+
 def build_obs_csv_path(gauge_outdir: str, site_no: str) -> str:
     """OBS file naming follows your convention: USGS_<id>_1h_UTC.csv"""
     ensure_dir(gauge_outdir)
@@ -379,6 +485,9 @@ def main():
     args = parse_args()
     site = args.site_num
 
+    if not args.folder_label:
+        args.folder_label = _current_timestamp_label()
+
     # Resolve fixed filenames from the two root folders
     args.basic_data_path   = ensure_abs_path(args.basic_data_path)
     args.default_param_dir = ensure_abs_path(args.default_param_dir)
@@ -420,10 +529,18 @@ def main():
           f"area_km2={'NA' if info.drainage_area_km2 is None else f'{info.drainage_area_km2:.2f}'}")
 
     # 2) Resolve folders and OBS CSV path
-    control_folder = os.path.join(args.cali_set_dir, f"{site}_{args.cali_tag}")
+    control_folder = os.path.join(args.cali_set_dir, f"{site}_{args.cali_tag}_{args.folder_label}")
     obs_csv_path = build_obs_csv_path(args.gauge_outdir, site)
 
-    # 3) Optionally download the hourly CSV
+    # 3) Clip MRMS to a site-specific subset for faster runs
+    clip_bounds = _compute_precip_bounds(info.latitude, info.longitude, info.drainage_area_km2)
+    if clip_bounds is None:
+        print("[WARN] Drainage area unknown; skipping MRMS clipping and using original precip path.")
+    else:
+        clip_dir = os.path.join(control_folder, "data_mrms_clip")
+        args.precip_path = clip_mrms_dataset(args.precip_path, clip_dir, clip_bounds)
+
+    # 4) Optionally download the hourly CSV
     if not args.skip_gauge_download:
         run_usgs_downloader(
             python_exec=args.python_exec,
@@ -437,7 +554,7 @@ def main():
     else:
         print("[INFO] Skipping gauge download as requested.")
 
-    # 4) Build control.txt content
+    # 5) Build control.txt content
     control_text = build_control_text(
         template=DEFAULT_TEMPLATE,
         site_no=site,
@@ -467,11 +584,11 @@ def main():
         TIME_END=args.time_end,
     )
 
-    # 5) Write control.txt
+    # 6) Write control.txt
     control_path = write_control_file(control_folder, control_text)
     print(f"[INFO] control.txt written to: {control_path}")
 
-    # 6) Run calibration
+    # 7) Run calibration
     TwoStageCalibrationManager = try_import_manager()
     calib = TwoStageCalibrationManager(
         args,

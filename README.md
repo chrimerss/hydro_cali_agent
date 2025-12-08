@@ -64,6 +64,7 @@ echo "OPENAI_API_KEY=<YOUR_OPENAI_API_KEY>" > .env
 | `--default_param_dir` | Folder with `crest_params/` & `kw_params/` grids (e.g., `wm_usa.tif`, `alpha_usa.tif`) used as spatial priors. |
 | `--cali_set_dir` | Root folder where site-specific subdirectories (control files, histories, plots) are created. Defaults to `./cali_set`. |
 | `--cali_tag` | Text appended to the site folder (`<site>_<tag>`) to distinguish multiple experiments (e.g., `2018`, `stormA`). |
+| `--folder_label` | Optional extra suffix after `<site>_<tag>` when creating the calibration folder. Defaults to the creation timestamp `YYYYMMDDHHmm`. |
 | `--precip_path`, `--precip_name` | Location and filename pattern for precipitation rasters passed to EF5’s `[PrecipForcing]`. |
 | `--pet_path`, `--pet_name` | PET raster location/pattern for `[PETForcing]`. |
 | `--gauge_outdir` | Where the script stores downloaded hourly USGS CSV files (`USGS_<id>_1h_UTC.csv`). |
