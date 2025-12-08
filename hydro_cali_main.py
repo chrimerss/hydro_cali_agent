@@ -27,6 +27,7 @@ from typing import Optional, Any, Union, Iterable
 
 import requests
 import rasterio
+import numpy as np
 from rasterio.coords import BoundingBox
 from rasterio.windows import from_bounds, Window
 from tqdm import tqdm
