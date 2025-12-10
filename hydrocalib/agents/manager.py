@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -15,7 +16,7 @@ from ..config import (DEFAULT_GAUGE_NUM, DEFAULT_PEAK_PICK_KWARGS, DEFAULT_SIM_F
                        EVENTS_FOR_AGGREGATE, IMPROVE_PATIENCE, MAX_STEPS_DEFAULT)
 from ..history import CandidateRecord, HistoryStore, RoundRecord
 from ..metrics import (aggregate_event_metrics, compute_event_metrics,
-                       read_metrics_from_csv)
+                       read_metrics_for_period, read_metrics_from_csv)
 from ..parameters import ParameterSet
 from ..peak_events import pick_peak_events
 from ..plotting import plot_event_windows, plot_hydrograph_with_precipitation
@@ -37,6 +38,19 @@ class CandidateOutcome:
     event_figures: List[str] = field(default_factory=list)
 
 
+@dataclass
+class TestConfig:
+    enabled: bool
+    warmup_begin: str
+    warmup_end: str
+    warmup_state: str
+    time_begin: str
+    time_end: str
+    timestep: str
+    eval_start: str
+    eval_end: str
+
+
 class TwoStageCalibrationManager:
     def __init__(self,
                  args_obj,
@@ -47,7 +61,8 @@ class TwoStageCalibrationManager:
                  include_max_event_images: int = 3,
                  peak_pick_kwargs: Optional[Dict] = None,
                  history_path: Optional[str] = None,
-                 max_workers: Optional[int] = None):
+                 max_workers: Optional[int] = None,
+                 test_config: Optional[TestConfig] = None):
         self.args_obj = args_obj
         self.current_params = ParameterSet.from_object(args_obj)
         self.runner = SimulationRunner(simu_folder=simu_folder, gauge_num=gauge_num)
@@ -63,6 +78,7 @@ class TwoStageCalibrationManager:
         self.round_index = 0
         self.stall = 0
         self.max_workers = max_workers
+        self.test_config = test_config
 
     def initialize_baseline(self) -> None:
         print("[Init] Running baseline simulation…")
@@ -97,6 +113,46 @@ class TwoStageCalibrationManager:
         aggregate = aggregate_event_metrics(event_metrics, top_n=self.n_peaks)
         full_metrics = read_metrics_from_csv(result.csv_path)
         return CandidateOutcome(result, result.params, windows, event_metrics, aggregate, full_metrics)
+
+    def _run_test_suite(self, params: Sequence[ParameterSet], round_index: int) -> Dict[int, Dict[str, Any]]:
+        if not self.test_config or not self.test_config.enabled:
+            return {}
+
+        overrides = {
+            "TIME_STATE": self.test_config.warmup_state,
+            "WARMUP_TIME_BEGIN": self.test_config.warmup_begin,
+            "WARMUP_TIME_END": self.test_config.warmup_end,
+            "TIME_BEGIN": self.test_config.time_begin,
+            "TIME_END": self.test_config.time_end,
+            "TIMESTEP": self.test_config.timestep,
+        }
+
+        summaries: Dict[int, Dict[str, Any]] = {}
+        for idx, param_set in enumerate(params):
+            result = self.runner.run_with_overrides(
+                param_set,
+                round_index=round_index,
+                candidate_index=idx,
+                subfolder="test",
+                states_dir=None,
+                scalar_overrides=overrides,
+            )
+            metrics = read_metrics_for_period(
+                result.csv_path,
+                start=self.test_config.eval_start,
+                end=self.test_config.eval_end,
+            )
+            summary = {
+                "round_index": round_index,
+                "candidate_index": idx,
+                "params": param_set.values.copy(),
+                "csv": result.csv_path,
+                "metrics": metrics,
+            }
+            summaries[idx] = summary
+            summary_path = Path(result.output_dir) / "summary.json"
+            summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2))
+        return summaries
 
     def _ensure_plots(self, outcome: CandidateOutcome) -> None:
         hydrograph_missing = not outcome.hydrograph_path or not Path(outcome.hydrograph_path).exists()
@@ -293,12 +349,24 @@ class TwoStageCalibrationManager:
             print(
                 f"[Round {r}] Launching {len(refined_params)} simulations (max_workers={self.max_workers or 'auto'})…"
             )
-            results = run_simulations_parallel(
-                self.runner,
-                refined_params,
-                round_index=r,
-                max_workers=self.max_workers,
-            )
+            test_future = None
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                calib_future = executor.submit(
+                    run_simulations_parallel,
+                    self.runner,
+                    refined_params,
+                    r,
+                    self.max_workers,
+                )
+                if self.test_config and self.test_config.enabled:
+                    test_future = executor.submit(self._run_test_suite, refined_params, r)
+
+                results = calib_future.result()
+                if test_future:
+                    test_summaries = test_future.result()
+                    print(f"[Round {r}] Test summaries written for {len(test_summaries)} candidates.")
+                else:
+                    test_summaries = {}
             outcomes = [self._process_result(res) for res in results]
 
             print(f"[Round {r}] Candidate performance summary:")

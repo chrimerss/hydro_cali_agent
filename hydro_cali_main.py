@@ -320,6 +320,22 @@ def parse_args() -> argparse.Namespace:
                    help="Warmup simulation start time (YYYYMMDDhhmm); default=201710010000")
     p.add_argument("--warmup_time_end", default="201801010000",
                    help="Warmup simulation end time (YYYYMMDDhhmm); default=201801010000")
+    p.add_argument("--test_warmup_begin", default="201801010000",
+                   help="Test run warmup start (YYYYMMDDhhmm); default=201801010000")
+    p.add_argument("--test_warmup_end", default="201901010000",
+                   help="Test run warmup end/time_state (YYYYMMDDhhmm); default=201901010000")
+    p.add_argument("--test_time_begin", default="201901010000",
+                   help="Test simulation start time (YYYYMMDDhhmm); default=201901010000")
+    p.add_argument("--test_time_end", default="201912312300",
+                   help="Test simulation end time (YYYYMMDDhhmm); default=201912312300")
+    p.add_argument("--test_time_step", default="1h",
+                   help="Test simulation timestep override; default=1h")
+    p.add_argument("--test_eval_start", default="2019-01-01 00:00",
+                   help="Start of evaluation window for test metrics")
+    p.add_argument("--test_eval_end", default="2019-12-31 23:00",
+                   help="End of evaluation window for test metrics")
+    p.add_argument("--disable_test_run", action="store_true",
+                   help="Skip running the parallel 2019 test simulations")
 
     # Model/routing
     p.add_argument("--model", default="CREST")
@@ -631,12 +647,33 @@ def main():
 
     # 7) Run calibration
     TwoStageCalibrationManager = try_import_manager()
+
+    test_config = None
+    if not args.disable_test_run:
+        try:
+            from hydrocalib.agents.manager import TestConfig
+
+            test_config = TestConfig(
+                enabled=True,
+                warmup_begin=args.test_warmup_begin,
+                warmup_end=args.test_warmup_end,
+                warmup_state=args.test_warmup_end,
+                time_begin=args.test_time_begin,
+                time_end=args.test_time_end,
+                timestep=args.test_time_step,
+                eval_start=args.test_eval_start,
+                eval_end=args.test_eval_end,
+            )
+        except Exception as e:
+            print(f"[WARN] Could not configure test simulations: {e}")
+
     calib = TwoStageCalibrationManager(
         args,
         simu_folder=os.path.relpath(control_folder, start=os.getcwd()),
         gauge_num=site,
         n_candidates=args.n_candidates,
         n_peaks=args.n_peaks,
+        test_config=test_config,
     )
     print(f"[INFO] Starting calibration (max_rounds={args.max_rounds}) ...")
     calib.run(max_rounds=args.max_rounds)

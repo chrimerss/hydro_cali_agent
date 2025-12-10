@@ -18,6 +18,7 @@ from .parameters import ParameterSet
 
 CONTROL_PATTERN = re.compile(r"^(OUTPUT\s*=\s*).*$", re.MULTILINE)
 STATES_PATTERN = re.compile(r"^(STATES\s*=\s*).*$", re.MULTILINE)
+SCALAR_PATTERN = lambda name: re.compile(rf"^{name}\s*=\s*.*$", re.MULTILINE)
 
 
 @dataclass
@@ -69,7 +70,20 @@ class SimulationRunner:
             raise FileNotFoundError(f"Base control.txt not found at {control_path}")
         return control_path.read_text()
 
-    def _render_control(self, params: ParameterSet, output_dir: str) -> str:
+    def _apply_scalar(self, content: str, name: str, value: Optional[str]) -> str:
+        if value is None:
+            return content
+        pattern = SCALAR_PATTERN(name)
+        if pattern.search(content):
+            return pattern.sub(f"{name}={value}", content)
+        return content + f"\n{name}={value}\n"
+
+    def _render_control(self,
+                        params: ParameterSet,
+                        output_dir: str,
+                        *,
+                        states_dir: Optional[str] = None,
+                        scalar_overrides: Optional[Dict[str, str]] = None) -> str:
         content = self._control_template
         for key, value in params.items():
             pattern = re.compile(rf"{key}=\s*[0-9.eE+-]+")
@@ -79,21 +93,35 @@ class SimulationRunner:
         else:
             content += f"\nOUTPUT={output_dir}/\n"
 
+        states_target = states_dir or output_dir
         if STATES_PATTERN.search(content):
-            content = STATES_PATTERN.sub(rf"\1{output_dir}/", content)
+            content = STATES_PATTERN.sub(rf"\1{states_target}/", content)
         else:
-            content += f"\nSTATES={output_dir}/\n"
+            content += f"\nSTATES={states_target}/\n"
+
+        if scalar_overrides:
+            for name, value in scalar_overrides.items():
+                content = self._apply_scalar(content, name, value)
         return content
 
-    def _write_control_file(self, content: str, round_index: int, candidate_index: int) -> str:
+    def _write_control_file(self,
+                            content: str,
+                            round_index: int,
+                            candidate_index: int,
+                            *,
+                            subfolder: Optional[str] = None) -> str:
         out_dir = self.simu_folder / "controls" / f"cali_{round_index:03d}" / f"cand_{candidate_index:02d}"
+        if subfolder:
+            out_dir = out_dir / subfolder
         out_dir.mkdir(parents=True, exist_ok=True)
         control_path = out_dir / "control.txt"
         control_path.write_text(content)
         return str(control_path.resolve())
 
-    def _output_dir(self, round_index: int, candidate_index: int) -> str:
+    def _output_dir(self, round_index: int, candidate_index: int, *, subfolder: Optional[str] = None) -> str:
         out_dir = self.simu_folder / "results" / f"cali_{round_index:03d}" / f"cand_{candidate_index:02d}"
+        if subfolder:
+            out_dir = out_dir / subfolder
         out_dir.mkdir(parents=True, exist_ok=True)
         return str(out_dir.resolve())
 
@@ -101,6 +129,34 @@ class SimulationRunner:
         output_dir = self._output_dir(round_index, candidate_index)
         control_content = self._render_control(params, output_dir)
         control_file = self._write_control_file(control_content, round_index, candidate_index)
+        log_path = Path(output_dir) / "logs" / "ef5.log"
+        run_ef5(control_file, self.ef5_executable, cwd=str(self.simu_folder), log_path=str(log_path))
+        csv_path = self._locate_csv(output_dir)
+        if csv_path is None:
+            raise FileNotFoundError(f"Simulation output CSV not found in {output_dir}")
+        return SimulationResult(round_index, candidate_index, params.copy(), output_dir, csv_path)
+
+    def run_with_overrides(self,
+                           params: ParameterSet,
+                           round_index: int,
+                           candidate_index: int,
+                           *,
+                           subfolder: Optional[str] = None,
+                           states_dir: Optional[str] = None,
+                           scalar_overrides: Optional[Dict[str, str]] = None) -> SimulationResult:
+        output_dir = self._output_dir(round_index, candidate_index, subfolder=subfolder)
+        control_content = self._render_control(
+            params,
+            output_dir,
+            states_dir=states_dir,
+            scalar_overrides=scalar_overrides,
+        )
+        control_file = self._write_control_file(
+            control_content,
+            round_index,
+            candidate_index,
+            subfolder=subfolder,
+        )
         log_path = Path(output_dir) / "logs" / "ef5.log"
         run_ef5(control_file, self.ef5_executable, cwd=str(self.simu_folder), log_path=str(log_path))
         csv_path = self._locate_csv(output_dir)
