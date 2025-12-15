@@ -27,8 +27,8 @@ PHYSICS_PARAMETER_GUIDE = (
 
 
 def _parameter_aliases() -> Dict[str, str]:
-    letters = [chr(ord("a") + idx) for idx, _ in enumerate(PARAM_BOUNDS)]
-    return {name: alias for name, alias in zip(PARAM_BOUNDS.keys(), letters)}
+    numbered = [f"x{idx + 1}" for idx, _ in enumerate(PARAM_BOUNDS)]
+    return {name: alias for name, alias in zip(PARAM_BOUNDS.keys(), numbered)}
 
 
 def build_display_name_map(use_physics_information: bool) -> Dict[str, str]:
