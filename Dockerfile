@@ -10,10 +10,7 @@ LABEL maintainer="Zhi Li <Zhi.Li-2@colorado.edu>"
 # Set environment variables to avoid interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update
-
-# Install software dependencies
-RUN apt-get install -y \
+RUN apt-get update && apt-get install -y --fix-missing \
 	git \
 	gcc \
 	g++ \
@@ -28,7 +25,7 @@ RUN apt-get install -y \
 	pkg-config \
 	python3 \
 	python3-pip \
-	python3-pip \
+    libgdal-dev \
 	wget \
 	vim \
 	nano

@@ -80,7 +80,6 @@ Once you have `hydro-cali.sif` on the cluster:
 ```bash
 singularity run \
   --bind $(pwd)/data_cali:/app/data_cali \
-  --bind $(pwd)/cali_set:/app/cali_set \
   --bind $(pwd)/.env:/app/.env \
   --bind $(pwd)/cali_args.txt:/app/cali_args.txt \
   hydro-cali.sif python3 hydro_cali_main.py @cali_args.txt --site_num 03284230
