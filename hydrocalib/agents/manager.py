@@ -294,13 +294,16 @@ class TwoStageCalibrationManager:
             "event_figures": outcome.event_figures[: self.include_max_event_images],
         }
 
+    def _history_limit(self, default: int) -> int:
+        return self.memory_cutoff if self.memory_cutoff is not None else default
+
     def _history_summary(self, last_k: int = 3) -> str:
         if not self.history.rounds:
             return "No prior rounds."
-        limit = self.memory_cutoff if self.memory_cutoff is not None else last_k
+        limit = self._history_limit(last_k)
         if limit == 0:
             return "No prior rounds."
-        tail = self.history.rounds[-limit:] if limit is not None else self.history.rounds
+        tail = self.history.rounds[-limit:]
         parts = []
         for round_record in tail:
             best = next((c for c in round_record.candidates if c.candidate_index == round_record.best_candidate_index), None)
@@ -347,13 +350,13 @@ class TwoStageCalibrationManager:
         if not self.history.path.exists():
             return {}
         payload = json.loads(self.history.path.read_text())
-        if self.memory_cutoff is not None and isinstance(payload.get("rounds"), list):
-            if self.memory_cutoff == 0:
+        rounds = payload.get("rounds")
+        if isinstance(rounds, list):
+            limit = self._history_limit(len(rounds))
+            if limit == 0:
                 payload["rounds"] = []
-            else:
-                rounds = payload["rounds"]
-                if len(rounds) > self.memory_cutoff:
-                    payload["rounds"] = rounds[-self.memory_cutoff:]
+            elif len(rounds) > limit:
+                payload["rounds"] = rounds[-limit:]
         return payload
 
     def _log_detail(self, stage: str, round_index: int, payload: Dict[str, Any]) -> None:
