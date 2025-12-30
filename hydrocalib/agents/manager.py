@@ -298,12 +298,11 @@ class TwoStageCalibrationManager:
         """Return the effective history window, falling back to ``default`` when unset."""
         return self.memory_cutoff if self.memory_cutoff is not None else default
 
-    def _apply_history_limit(self, items: List[Any], default: int) -> List[Any]:
-        limit = self._history_limit(default)
+    def _apply_history_limit(self, items: List[Any], default: Optional[int] = None) -> List[Any]:
+        effective_default = default if default is not None else len(items)
+        limit = self._history_limit(effective_default)
         if limit == 0:
             return []
-        if limit >= len(items):
-            return list(items)
         return list(items[-limit:])
 
     def _history_summary(self, last_k: int = 3) -> str:
@@ -358,7 +357,7 @@ class TwoStageCalibrationManager:
         payload = json.loads(self.history.path.read_text())
         rounds = payload.get("rounds")
         if isinstance(rounds, list):
-            payload["rounds"] = self._apply_history_limit(rounds, len(rounds))
+            payload["rounds"] = self._apply_history_limit(rounds)
         return payload
 
     def _log_detail(self, stage: str, round_index: int, payload: Dict[str, Any]) -> None:
