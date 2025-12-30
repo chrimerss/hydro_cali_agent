@@ -67,7 +67,7 @@ class TwoStageCalibrationManager:
                  include_max_event_images: int = 3,
                  peak_pick_kwargs: Optional[Dict] = None,
                  history_path: Optional[str] = None,
-                  memory_cutoff: Optional[int] = None,
+                 memory_cutoff: Optional[int] = None,
                  max_workers: Optional[int] = None,
                  test_config: Optional[TestConfig] = None,
                  objective: str = "nse_event",
@@ -96,7 +96,9 @@ class TwoStageCalibrationManager:
         self.peak_pick_kwargs = peak_pick_kwargs or DEFAULT_PEAK_PICK_KWARGS
         hist_path = history_path or (Path(simu_folder) / "results" / "calibration_history.json")
         self.history = HistoryStore(Path(hist_path))
-        self.memory_cutoff = memory_cutoff if memory_cutoff is not None and memory_cutoff >= 0 else None
+        if memory_cutoff is not None and memory_cutoff < 0:
+            raise ValueError("memory_cutoff must be non-negative")
+        self.memory_cutoff = memory_cutoff
         self.best_outcome: Optional[CandidateOutcome] = None
         self.round_index = 0
         self.stall = 0
@@ -298,7 +300,7 @@ class TwoStageCalibrationManager:
         limit = self.memory_cutoff if self.memory_cutoff is not None else last_k
         if limit == 0:
             return "No prior rounds."
-        tail = self.history.rounds[-limit:] if limit else self.history.rounds
+        tail = self.history.rounds[-limit:] if limit is not None else self.history.rounds
         parts = []
         for round_record in tail:
             best = next((c for c in round_record.candidates if c.candidate_index == round_record.best_candidate_index), None)
