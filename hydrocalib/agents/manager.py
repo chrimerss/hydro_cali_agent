@@ -295,10 +295,11 @@ class TwoStageCalibrationManager:
         }
 
     def _history_limit(self, default: int) -> int:
-        """Return the effective history window, falling back to ``default`` when unset."""
+        """Return the effective history window, falling back to default when unset."""
         return self.memory_cutoff if self.memory_cutoff is not None else default
 
     def _apply_history_limit(self, items: List[Any], default: Optional[int] = None) -> List[Any]:
+        """Trim a sequence of history entries using the configured cutoff or the provided default."""
         effective_default = default if default is not None else len(items)
         limit = self._history_limit(effective_default)
         if limit == 0:
